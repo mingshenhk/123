@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local device captures and runtime data
+.local/
+captures/
+logs/
+*.png
+*.xml
+*.log
+
+# User-provided game APKs and build artifacts
+*.apk
+*.aab
+*.apks
+*.jks
+*.keystore
+local.properties
+build/
+dist/

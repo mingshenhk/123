@@ -1,0 +1,12 @@
+{
+  "name": "Observe-only template",
+  "package": "com.palmmud.xyjclient",
+  "steps": [
+    {
+      "action": "wait_text",
+      "text": "replace with a UI label confirmed on the connected device",
+      "timeout_seconds": 10,
+      "retries": 0
+    }
+  ]
+}
