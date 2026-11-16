@@ -9,7 +9,7 @@ import sys
 from .adb import AdbClient, AdbError, GAME_PACKAGE, adb_command, choose_serial
 from .safety import human_check_terms, risky_action_terms, wait_for_manual_verification
 from .tasks import TaskError, execute_task, load_task
-from .ui import node_matches, parse_hierarchy
+from .ui import UiNode, node_matches, parse_hierarchy
 
 
 DEFAULT_CAPTURE_DIR = Path(".local")
@@ -35,6 +35,19 @@ def _operation_log(message: str) -> None:
         log_file.write(message + "\n")
 
 
+def _wait_for_manual_check(client: AdbClient, nodes: list[UiNode]) -> list[UiNode]:
+    latest_nodes = nodes
+
+    def reread_text() -> str:
+        nonlocal latest_nodes
+        latest_nodes = parse_hierarchy(client.dump_ui())
+        return "\n".join(f"{node.text}\n{node.content_desc}" for node in latest_nodes)
+
+    initial_text = "\n".join(f"{node.text}\n{node.content_desc}" for node in nodes)
+    wait_for_manual_verification(initial_text, reread_text, logger=_operation_log)
+    return latest_nodes
+
+
 def _inspect(client: AdbClient, package: str) -> int:
     client.require_device()
     info = client.device_info()
@@ -52,17 +65,8 @@ def _tap(client: AdbClient, selector: str, value: str, expect: str, timeout: int
         raise TaskError("Game is not the foreground app; refusing to interact")
     if risky_action_terms(value) or risky_action_terms(expect):
         raise TaskError("Risk-related action or expected text is blocked")
-    nodes = parse_hierarchy(client.dump_ui())
+    nodes = _wait_for_manual_check(client, parse_hierarchy(client.dump_ui()))
     all_text = "\n".join(f"{node.text}\n{node.content_desc}" for node in nodes)
-    resolved_text = wait_for_manual_verification(
-        all_text,
-        lambda: "\n".join(
-            f"{node.text}\n{node.content_desc}" for node in parse_hierarchy(client.dump_ui())
-        ),
-        logger=_operation_log,
-    )
-    if resolved_text != all_text:
-        nodes = parse_hierarchy(client.dump_ui())
     if risky_action_terms(all_text):
         raise TaskError("Risk-related screen text detected; automation stopped")
     matches = [node for node in nodes if node_matches(node, **{selector: value})]
@@ -77,18 +81,8 @@ def _tap(client: AdbClient, selector: str, value: str, expect: str, timeout: int
     import time
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        nodes_after = parse_hierarchy(client.dump_ui())
+        nodes_after = _wait_for_manual_check(client, parse_hierarchy(client.dump_ui()))
         text_after = "\n".join(f"{item.text}\n{item.content_desc}" for item in nodes_after)
-        resolved_text = wait_for_manual_verification(
-            text_after,
-            lambda: "\n".join(
-                f"{item.text}\n{item.content_desc}" for item in parse_hierarchy(client.dump_ui())
-            ),
-            logger=_operation_log,
-        )
-        if resolved_text != text_after:
-            nodes_after = parse_hierarchy(client.dump_ui())
-            text_after = "\n".join(f"{item.text}\n{item.content_desc}" for item in nodes_after)
         if risky_action_terms(text_after):
             raise TaskError("Risk-related screen text detected after tap; automation stopped")
         if any(node_matches(item, text=expect) for item in nodes_after):

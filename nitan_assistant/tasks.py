@@ -9,7 +9,7 @@ import time
 from typing import Callable
 
 from .adb import AdbClient, GAME_PACKAGE
-from .safety import human_check_terms, risky_action_terms, wait_for_manual_verification
+from .safety import risky_action_terms, wait_for_manual_verification
 from .ui import UiNode, node_matches, parse_hierarchy
 
 
@@ -78,22 +78,21 @@ def load_task(path: Path) -> Task:
 
 def _observe(client: AdbClient, *, prompt: Callable[[str], str] = input,
              logger: Callable[[str], None] = print) -> list[UiNode]:
-    raw_xml = client.dump_ui()
-    raw = parse_hierarchy(raw_xml)
-    all_text = "\n".join(f"{node.text}\n{node.content_desc}" for node in raw)
-    resolved_text = wait_for_manual_verification(
+    latest_nodes = parse_hierarchy(client.dump_ui())
+
+    def reread_text() -> str:
+        nonlocal latest_nodes
+        latest_nodes = parse_hierarchy(client.dump_ui())
+        return "\n".join(f"{node.text}\n{node.content_desc}" for node in latest_nodes)
+
+    all_text = "\n".join(f"{node.text}\n{node.content_desc}" for node in latest_nodes)
+    wait_for_manual_verification(
         all_text,
-        lambda: "\n".join(
-            f"{node.text}\n{node.content_desc}" for node in parse_hierarchy(client.dump_ui())
-        ),
+        reread_text,
         prompt=prompt,
         logger=logger,
     )
-    if resolved_text != all_text:
-        raw = parse_hierarchy(client.dump_ui())
-    if human_check_terms(resolved_text):
-        raise TaskError("Human verification remains visible; automation stopped")
-    return raw
+    return latest_nodes
 
 
 def _unique_text_node(nodes: list[UiNode], text: str) -> UiNode:
