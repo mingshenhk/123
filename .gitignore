@@ -9,6 +9,8 @@ captures/
 logs/
 *.png
 *.xml
+!/app/src/main/AndroidManifest.xml
+!/app/src/main/res/**/*.xml
 *.log
 /work/
 /outputs/
