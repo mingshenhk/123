@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">泥潭伏魔传助手</string>
     <string name="service_name">泥潭伏魔传助手</string>
-    <string name="service_description">在你启动任务后读取游戏控件文字，并执行经过核验的设定往返操作。</string>
+    <string name="service_description">在你启动任务后读取游戏控件文字，并按你输入的目标或预设规则执行界面点击。</string>
     <string name="latest_operation">最近操作　%1$s</string>
     <string name="latest_error">最近错误　%1$s</string>
 </resources>

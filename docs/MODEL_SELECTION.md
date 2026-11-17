@@ -1,13 +1,5 @@
-# 手机端模型候选（暂不集成）
+# 手机端模型
 
-当前脚本版不调用模型。后续若加入手机本地模型，建议先基准测试 `LFM2.5-350M` 的 GGUF `Q4_K_M` 量化版：它是指令微调模型，官方资料列出的该量化文件约 229 MB，适合作为低内存/低延迟的起点。若它无法稳定完成界面摘要或结构化建议，再在同一手机上比较 `LFM2.5-1.2B-Instruct` 的 `Q4_K_M`。Liquid AI 的硬件评估指南也建议先以 350M 做 bring-up，再逐步测 1.2B；`Q4_K_M` 是其 CPU/edge 默认评估量化。`llama.cpp` 提供 Android 本地运行方式。
+v0.2.0 使用 LFM3-1.7B 的 LiteRT 混合 INT4 量化文件，约 1.44 GB，配置 2,048 token 的上下文。Android APK 通过 LiteRT-LM 在 CPU 上运行，读取无障碍服务提供的控件文字。LFM3-1.7B 是纯文本模型。[模型说明](https://huggingface.co/LiquidAI/LFM3-1.7B) · [LiteRT 文件和测试数据](https://huggingface.co/litert-community/LFM3-1.7B-LiteRT) · [Android 运行时](https://developers.google.com/edge/litert-lm/android)
 
-候选不等于已验证：不同手机的 SoC、可用 RAM、散热和运行时差异很大，本机没有提供目标手机规格，也没有在目标手机跑过基准，所以目前不能承诺流畅。正式选型前要在目标手机、游戏同时运行的情况下测模型加载峰值内存、首 token 延迟、持续生成速度和长时间温度。模型只负责低频提供状态摘要/结构化建议；规则层继续校验并执行动作，不让模型直接控制点击。当前脚本阶段不包含模型。
-
-参考：
-
-- [Liquid AI hardware evaluation guide](https://github.com/Liquid4All/docs/blob/main/guides/hardware-evaluation.mdx)
-- [Liquid AI model library](https://docs.liquid.ai/lfm/models/complete-library)
-- [Liquid AI LFM2.5-350M model card](https://huggingface.co/LiquidAI/LFM2.5-350M)
-- [Liquid AI: LFM2.5-1.2B Thinking on device](https://www.liquid.ai/blog/lfm2-5-1-2b-thinking-on-device-reasoning-under-1gb)
-- [llama.cpp Android guide](https://github.com/ggml-org/llama.cpp/blob/master/docs/android.md)
+同一模型配置的公开解码成绩为 Galaxy S26 CPU 35.53 token/s、GPU 32.42 token/s，以及 Pixel 8a CPU 14.73 token/s、GPU 12.77 token/s。两款设备的 CPU 内存峰值分别约 2.2 GiB 和 1.9 GiB。游戏内的单步耗时还包括模型加载、处理界面文字和核对点击结果。实体手机验收时应记录这些耗时，以及与游戏同时运行的内存峰值和发热情况。[设备测试数据](https://huggingface.co/litert-community/LFM3-1.7B-LiteRT)

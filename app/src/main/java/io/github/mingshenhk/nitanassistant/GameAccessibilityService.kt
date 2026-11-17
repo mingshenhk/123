@@ -2,6 +2,7 @@ package io.github.mingshenhk.nitanassistant
 
 import android.accessibilityservice.AccessibilityService
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -31,7 +32,7 @@ class GameAccessibilityService : AccessibilityService() {
     private var overlayStatus: TextView? = null
     private var overlayPause: Button? = null
     private var overlayFailed = false
-    private var runner: RuleRunner? = null
+    private var runner: TaskRunner? = null
     internal val phase get() = runner?.phase ?: Phase.IDLE
     internal val status get() = runner?.status ?: "等待启动"
     internal val elapsedMillis get() = runner?.elapsedMillis ?: 0
@@ -62,17 +63,36 @@ class GameAccessibilityService : AccessibilityService() {
         if (active) return
         try {
             val task = RuleAsset.load(this)
-            runner = RuleRunner(task, SystemClock::elapsedRealtime) { level, message ->
+            val ruleRunner = RuleRunner(task, SystemClock::elapsedRealtime) { level, message ->
                 RunLog.append(this, task.name, level, message)
             }
-            overlayFailed = false
-            runner?.start()
-            openGame()
-            handler.post(poll)
+            launch(ruleRunner, openGame)
         } catch (_: Exception) {
             runner?.fail("无法打开游戏或读取任务配置")
             if (phase != Phase.ERROR) RunLog.append(this, RuleAsset.NAME, Level.ERROR, "无法读取任务配置")
         }
+    }
+
+    internal fun startAiTask(goal: String, openGame: () -> Unit) {
+        if (active || !ModelStore.supported || goal.isBlank() || goal.length > MAX_GOAL) return
+        val file = ModelStore.ready(this) ?: return
+        val model = LocalAiModel(file, cacheDir)
+        val ai = AiRunner(goal, model, SystemClock::elapsedRealtime, { level, message ->
+            RunLog.append(this, "本地 AI", level, message)
+        }, model::close)
+        try {
+            launch(ai, openGame)
+        } catch (_: RuntimeException) {
+            ai.fail("无法打开游戏")
+        }
+    }
+
+    private fun launch(task: TaskRunner, openGame: () -> Unit) {
+        runner = task
+        overlayFailed = false
+        task.start()
+        openGame()
+        handler.post(poll)
     }
 
     internal fun pauseOrResume(openGame: (() -> Unit)? = null) {
@@ -141,6 +161,9 @@ class GameAccessibilityService : AccessibilityService() {
         val pending = ArrayDeque<Pair<AccessibilityNodeInfo, AccessibilityNodeInfo?>>()
         pending.addLast(root to null)
         val controls = mutableListOf<Control>()
+        val clickGroups = mutableMapOf<AccessibilityNodeInfo, Int>()
+        val screenBounds = Rect().also(root::getBoundsInScreen)
+        val nodeBounds = Rect()
         try {
             while (pending.isNotEmpty()) {
                 val (node, parentClick) = pending.removeLast()
@@ -153,9 +176,14 @@ class GameAccessibilityService : AccessibilityService() {
                 val text = node.text?.toString()?.trim().orEmpty()
                 val description = node.contentDescription?.toString()?.trim().orEmpty()
                 if (node.isVisibleToUser && (text.isNotEmpty() || description.isNotEmpty())) {
-                    controls += Control(text, description, clickNode?.let { target ->
-                        { clickIfActive(target) }
-                    })
+                    node.getBoundsInScreen(nodeBounds)
+                    val x = 100L * (nodeBounds.centerX() - screenBounds.left) / screenBounds.width().coerceAtLeast(1)
+                    val y = 100L * (nodeBounds.centerY() - screenBounds.top) / screenBounds.height().coerceAtLeast(1)
+                    controls += Control(
+                        text, description, "$x%横 $y%纵",
+                        clickGroup = clickNode?.let { clickGroups.getOrPut(it) { clickGroups.size } },
+                        click = clickNode?.let { target -> { clickIfActive(target) } },
+                    )
                 }
                 for (index in 0 until node.childCount) {
                     val child = node.getChild(index) ?: continue
@@ -164,7 +192,7 @@ class GameAccessibilityService : AccessibilityService() {
                     pending.addLast(child to clickNode)
                 }
             }
-            consume(Screen(controls))
+            consume(Screen(controls, root.windowId))
             return true
         } finally {
             obtained.forEach(::release)

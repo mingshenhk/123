@@ -2,21 +2,30 @@ package io.github.mingshenhk.nitanassistant
 
 import android.app.Activity
 import android.content.Intent
+import android.content.ActivityNotFoundException
 import android.graphics.Color
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.text.InputFilter
 import android.view.WindowInsets
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
+import android.widget.Toast
 
 class MainActivity : Activity() {
+    private companion object {
+        const val IMPORT_MODEL = 1
+        const val GOAL_VIEW = 0x10001
+    }
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
         override fun run() {
@@ -33,6 +42,10 @@ class MainActivity : Activity() {
     private lateinit var pause: Button
     private lateinit var stop: Button
     private lateinit var log: TextView
+    private lateinit var modelStatus: TextView
+    private lateinit var importModel: Button
+    private lateinit var goal: EditText
+    private lateinit var aiStart: Button
     private var logRevision = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,16 +75,10 @@ class MainActivity : Activity() {
         body.action("打开系统无障碍设置") {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
-        body.label("当前任务", bold = true, top = 18)
-        body.label(RuleAsset.NAME)
-        body.label("请先把游戏停在角色入口。", 14f)
+        body.label("任务控制", bold = true, top = 18)
         status = body.label("待命", top = 7)
         operation = body.label("最近操作  —", 14f)
         error = body.label("最近错误  —", 14f)
-        start = body.action("打开游戏并启动") {
-            GameAccessibilityService.connected?.startTask(::openGame)
-            renderState()
-        }
         val actions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             body.addView(this)
@@ -93,6 +100,40 @@ class MainActivity : Activity() {
                 preferences.edit().putBoolean(OVERLAY_SETTING, checked).apply()
             }
         })
+        body.label("本地 AI · LFM3-1.7B", bold = true, top = 18)
+        modelStatus = body.label("正在检查模型", 14f)
+        val modelActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            body.addView(this)
+        }
+        modelActions.action("模型下载页") {
+            openExternal(Intent(Intent.ACTION_VIEW, Uri.parse(ModelStore.PAGE)), "没有可用的浏览器")
+        }
+        importModel = modelActions.action("导入模型") {
+            pickModel()
+        }
+        goal = EditText(this).apply {
+            id = GOAL_VIEW
+            hint = "例如 打开日常任务列表"
+            setSingleLine()
+            filters = arrayOf(InputFilter.LengthFilter(MAX_GOAL))
+            body.addView(this)
+        }
+        aiStart = body.action("运行 AI 任务") {
+            val instruction = goal.text.toString().trim()
+            if (instruction.isEmpty()) {
+                goal.error = "请输入任务目标"
+            } else {
+                GameAccessibilityService.connected?.startAiTask(instruction, ::openGame)
+                renderState()
+            }
+        }
+        body.label("规则任务", bold = true, top = 18)
+        body.label("${RuleAsset.NAME} · 请先把游戏停在角色入口", 14f)
+        start = body.action("运行规则任务") {
+            GameAccessibilityService.connected?.startTask(::openGame)
+            renderState()
+        }
         body.label("运行日志", bold = true, top = 18)
         log = body.label("暂无记录", 13f).apply {
             setTextIsSelectable(true)
@@ -114,6 +155,36 @@ class MainActivity : Activity() {
         startActivity(launch)
     }
 
+    @Suppress("DEPRECATION")
+    private fun pickModel() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        try {
+            startActivityForResult(intent, IMPORT_MODEL)
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(this, "系统文件选择器不可用", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    @Deprecated("This Activity uses the platform document picker result.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == IMPORT_MODEL && resultCode == RESULT_OK) {
+            data?.data?.let { ModelStore.import(this, it) }
+            renderState()
+        }
+    }
+
+    private fun openExternal(intent: Intent, fallback: String) {
+        try {
+            startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(this, fallback, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun renderState() {
         val service = GameAccessibilityService.connected
         val installed = packageManager.getLaunchIntentForPackage(GAME_PACKAGE) != null
@@ -127,6 +198,15 @@ class MainActivity : Activity() {
         val seconds = (service?.elapsedMillis ?: 0) / 1_000
         status.show(if (service == null) phase.label else "${phase.label} · ${seconds} 秒\n${service.status}")
         start.isEnabled = service != null && installed && !service.active
+        val modelReady = ModelStore.ready(this) != null
+        modelStatus.show(when {
+            !ModelStore.supported -> "此设备不支持端侧推理"
+            ModelStore.importing -> "正在复制并校验模型"
+            modelReady -> "模型已就绪 · 离线推理"
+            else -> ModelStore.error ?: "请选择 mixed_int4_ekv2048.litertlm（约 1.44 GB）"
+        })
+        importModel.isEnabled = ModelStore.supported && !ModelStore.importing && !modelReady
+        aiStart.isEnabled = start.isEnabled && ModelStore.supported && modelReady && !ModelStore.importing
         pause.isEnabled = service?.active == true
         pause.show(if (phase == Phase.PAUSED) "继续" else "暂停")
         stop.isEnabled = service?.active == true

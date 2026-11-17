@@ -31,8 +31,14 @@ internal enum class Phase(val label: String) {
 
 internal enum class Level { DEBUG, INFO, WARNING, ERROR }
 
-internal data class Control(val text: String, val description: String, val click: (() -> Boolean)?)
-internal data class Screen(val controls: List<Control>) {
+internal data class Control(
+    val text: String,
+    val description: String,
+    val location: String = "",
+    val clickGroup: Int? = null,
+    val click: (() -> Boolean)?,
+)
+internal data class Screen(val controls: List<Control>, val windowId: Int = 0) {
     fun shows(text: String) = controls.any { it.text == text }
 }
 
@@ -46,19 +52,33 @@ private val accountTerms = listOf(
     "登录", "登入", "登陆", "注册", "创建角色", "识别码", "进入游戏", "log in", "sign in", "sign up", "register",
 )
 
-private fun isVerification(label: String) = verificationTerms.any { it in label }
-private fun isRisk(label: String) = riskTerms.any { it in label }
-private fun isManualControl(label: String) =
+internal fun isVerification(label: String) = verificationTerms.any { it in label }
+internal fun isRisk(label: String) = riskTerms.any { it in label }
+internal fun isManualControl(label: String) =
     isRisk(label) || isVerification(label) || accountTerms.any { label.contains(it, ignoreCase = true) }
+
+internal interface TaskRunner {
+    val phase: Phase
+    val status: String
+    val active: Boolean
+        get() = phase == Phase.RUNNING || phase == Phase.PAUSED
+    val elapsedMillis: Long
+    fun start()
+    fun pause(reason: String = "已手动暂停")
+    fun resume(reopeningGame: Boolean = false)
+    fun stop(reason: String = "已手动停止")
+    fun fail(reason: String)
+    fun tick(screen: Screen?)
+}
 
 internal class RuleRunner(
     private val task: RuleTask,
     private val clock: () -> Long,
     private val log: (Level, String) -> Unit,
-) {
-    var phase = Phase.IDLE
+) : TaskRunner {
+    override var phase = Phase.IDLE
         private set
-    var status = "等待启动"
+    override var status = "等待启动"
         private set
     private var startedAt = 0L
     private var deadline = 0L
@@ -71,10 +91,7 @@ internal class RuleRunner(
     private var tapSent = false
     private var gameReturnDeadline: Long? = null
 
-    val active: Boolean
-        get() = phase == Phase.RUNNING || phase == Phase.PAUSED
-
-    val elapsedMillis: Long
+    override val elapsedMillis: Long
         get() {
             val end = when (phase) {
                 Phase.IDLE -> return 0
@@ -85,7 +102,7 @@ internal class RuleRunner(
             return (end - startedAt - pausedMillis).coerceAtLeast(0)
         }
 
-    fun start() {
+    override fun start() {
         check(phase == Phase.IDLE)
         startedAt = clock()
         deadline = startedAt + 10_000
@@ -94,7 +111,7 @@ internal class RuleRunner(
         log(Level.INFO, status)
     }
 
-    fun pause(reason: String = "已手动暂停") {
+    override fun pause(reason: String) {
         if (phase != Phase.RUNNING) return
         pausedAt = clock()
         phase = Phase.PAUSED
@@ -102,7 +119,7 @@ internal class RuleRunner(
         log(Level.WARNING, status)
     }
 
-    fun resume(reopeningGame: Boolean = false) {
+    override fun resume(reopeningGame: Boolean) {
         if (phase != Phase.PAUSED) return
         val now = clock()
         val interval = now - pausedAt
@@ -114,15 +131,15 @@ internal class RuleRunner(
         log(Level.INFO, status)
     }
 
-    fun stop(reason: String = "已手动停止") {
+    override fun stop(reason: String) {
         if (active) finish(Phase.STOPPED, Level.INFO, reason)
     }
 
-    fun fail(reason: String) {
+    override fun fail(reason: String) {
         if (active) finish(Phase.ERROR, Level.ERROR, reason)
     }
 
-    fun tick(screen: Screen?) {
+    override fun tick(screen: Screen?) {
         if (phase != Phase.RUNNING) return
         val now = clock()
         if (screen == null) {
