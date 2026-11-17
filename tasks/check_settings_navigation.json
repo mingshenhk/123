@@ -1,0 +1,9 @@
+{
+  "name": "角色入口与客户端设定往返",
+  "package": "com.palmmud.xyjclient",
+  "steps": [
+    {"action": "wait_text", "text": "进入游戏", "timeout_seconds": 10},
+    {"action": "tap_text", "text": "游戏设定", "expect_text": "客户端设定", "timeout_seconds": 10},
+    {"action": "tap_text", "text": "返回", "expect_text": "进入游戏", "timeout_seconds": 10}
+  ]
+}

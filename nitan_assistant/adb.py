@@ -10,6 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Sequence
+from uuid import uuid4
 
 
 GAME_PACKAGE = "com.palmmud.xyjclient"
@@ -43,17 +44,60 @@ def _wsl_adb_command() -> list[str] | None:
     return None
 
 
+def _windows_adb() -> Path | None:
+    import winreg
+
+    for variable in ("ANDROID_HOME", "ANDROID_SDK_ROOT", "LOCALAPPDATA"):
+        value = os.environ.get(variable)
+        if value:
+            root = Path(value)
+            if variable == "LOCALAPPDATA":
+                root = root / "Android" / "Sdk"
+            candidate = root / "platform-tools" / "adb.exe"
+            if candidate.is_file():
+                return candidate
+
+    uninstall = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+    for hive, view in (
+        (winreg.HKEY_CURRENT_USER, 0),
+        (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_32KEY),
+        (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_64KEY),
+    ):
+        try:
+            with winreg.OpenKey(hive, uninstall, 0, winreg.KEY_READ | view) as key:
+                count = winreg.QueryInfoKey(key)[0]
+                for index in range(count):
+                    try:
+                        with winreg.OpenKey(key, winreg.EnumKey(key, index)) as entry:
+                            name = str(winreg.QueryValueEx(entry, "DisplayName")[0]).casefold()
+                            if "ldplayer" not in name and "雷电模拟器" not in name:
+                                continue
+                            icon = str(winreg.QueryValueEx(entry, "DisplayIcon")[0])
+                        icon_path = Path(os.path.expandvars(icon.rsplit(",", 1)[0].strip().strip('"')))
+                        candidate = icon_path.parent / "adb.exe"
+                        if candidate.is_absolute() and candidate.is_file():
+                            return candidate
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return None
+
+
 def adb_command(explicit: str | None = None) -> list[str]:
     configured = explicit or os.environ.get("NITAN_ADB")
     if configured:
         path = shutil.which(configured) or configured
-        if Path(path).exists() or shutil.which(path):
+        if Path(path).is_file():
             return [path]
         raise AdbError(f"ADB executable not found: {configured}")
     found = shutil.which("adb")
     if found:
         return [found]
     if sys.platform == "win32":
+        native = _windows_adb()
+        if native:
+            return [str(native)]
         wsl_command = _wsl_adb_command()
         if wsl_command:
             return wsl_command
@@ -110,14 +154,16 @@ class AdbClient:
         return output.startswith("package:")
 
     def foreground(self) -> str:
+        window_output = self.shell("dumpsys window windows", timeout=20)
+        match = re.search(r"mCurrentFocus=.*?\s([\w.]+)/", window_output)
+        if match:
+            return match.group(1)
         output = self.shell("dumpsys activity activities", timeout=20)
         for pattern in (r"mResumedActivity:.*?\s([\w.]+)/", r"ResumedActivity:.*?\s([\w.]+)/"):
             match = re.search(pattern, output)
             if match:
                 return match.group(1)
-        window_output = self.shell("dumpsys window windows", timeout=20)
-        match = re.search(r"mCurrentFocus=.*?\s([\w.]+)/", window_output)
-        return match.group(1) if match else "unknown"
+        return "unknown"
 
     def device_info(self) -> dict[str, str]:
         props = {
@@ -133,8 +179,12 @@ class AdbClient:
         return info
 
     def dump_ui(self) -> str:
-        self.shell("uiautomator dump --compressed /sdcard/nitan-window.xml", timeout=30)
-        return self.shell("cat /sdcard/nitan-window.xml", timeout=10)
+        path = f"/data/local/tmp/nitan-ui-{uuid4().hex}.xml"
+        return self.shell(
+            f"uiautomator dump --compressed {path} >&2 && cat {path}; "
+            f"dump_status=$?; rm -f {path}; exit $dump_status",
+            timeout=30,
+        )
 
     def screenshot(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

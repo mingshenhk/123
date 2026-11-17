@@ -30,6 +30,9 @@ RISKY_ACTION_TERMS = (
     "扣除",
 )
 
+ACCOUNT_ACTION_TERMS = ("登录", "登入", "登陆", "注册", "创建角色", "识别码", "进入游戏",
+                        "log in", "sign in", "sign up", "register")
+
 
 def matching_terms(text: str, terms: tuple[str, ...]) -> tuple[str, ...]:
     lowered = text.casefold()
@@ -42,6 +45,10 @@ def human_check_terms(text: str) -> tuple[str, ...]:
 
 def risky_action_terms(text: str) -> tuple[str, ...]:
     return matching_terms(text, RISKY_ACTION_TERMS)
+
+
+def blocked_control(text: str) -> bool:
+    return bool(risky_action_terms(text) or matching_terms(text, ACCOUNT_ACTION_TERMS))
 
 
 def wait_for_manual_verification(

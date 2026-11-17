@@ -3,23 +3,17 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 from pathlib import Path
 import sys
 
 from .adb import AdbClient, AdbError, GAME_PACKAGE, adb_command, choose_serial
-from .safety import human_check_terms, risky_action_terms, wait_for_manual_verification
-from .tasks import TaskError, execute_task, load_task
-from .ui import UiNode, node_matches, parse_hierarchy
+from .safety import human_check_terms
+from .tasks import TaskError, execute_task, load_task, tap_and_verify
+from .ui import parse_hierarchy
 
 
 DEFAULT_CAPTURE_DIR = Path(".local")
-
-
-def _client(args: argparse.Namespace) -> AdbClient:
-    command = adb_command(args.adb)
-    discovery = AdbClient(command)
-    serial = choose_serial(discovery.devices(), args.serial)
-    return AdbClient(command, serial=serial)
 
 
 def _save_text(path: Path, content: str) -> None:
@@ -27,25 +21,14 @@ def _save_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _operation_log(message: str) -> None:
-    print(message)
+def _operation_log(message: str, level: str = "INFO") -> None:
+    output = sys.stderr if level == "ERROR" else sys.stdout
+    print(message, file=output)
     log_path = DEFAULT_CAPTURE_DIR / "nitan-assistant.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as log_file:
-        log_file.write(message + "\n")
-
-
-def _wait_for_manual_check(client: AdbClient, nodes: list[UiNode]) -> list[UiNode]:
-    latest_nodes = nodes
-
-    def reread_text() -> str:
-        nonlocal latest_nodes
-        latest_nodes = parse_hierarchy(client.dump_ui())
-        return "\n".join(f"{node.text}\n{node.content_desc}" for node in latest_nodes)
-
-    initial_text = "\n".join(f"{node.text}\n{node.content_desc}" for node in nodes)
-    wait_for_manual_verification(initial_text, reread_text, logger=_operation_log)
-    return latest_nodes
+        timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        log_file.write(f"{timestamp} [{level}] {message}\n")
 
 
 def _inspect(client: AdbClient, package: str) -> int:
@@ -59,42 +42,9 @@ def _inspect(client: AdbClient, package: str) -> int:
     return 0
 
 
-def _tap(client: AdbClient, selector: str, value: str, expect: str, timeout: int) -> int:
-    client.require_device()
-    if client.foreground() != GAME_PACKAGE:
-        raise TaskError("Game is not the foreground app; refusing to interact")
-    if risky_action_terms(value) or risky_action_terms(expect):
-        raise TaskError("Risk-related action or expected text is blocked")
-    nodes = _wait_for_manual_check(client, parse_hierarchy(client.dump_ui()))
-    all_text = "\n".join(f"{node.text}\n{node.content_desc}" for node in nodes)
-    if risky_action_terms(all_text):
-        raise TaskError("Risk-related screen text detected; automation stopped")
-    matches = [node for node in nodes if node_matches(node, **{selector: value})]
-    if len(matches) != 1:
-        raise TaskError(f"Expected exactly one matching node; found {len(matches)}")
-    node = matches[0]
-    if not node.center or (not node.clickable and not node.clickable_ancestor_bounds):
-        raise TaskError("Matched UI node is not in a clickable control")
-    x, y = node.center
-    client.tap(x, y)
-    _operation_log(f"Tap sent at ({x}, {y}); waiting up to {timeout}s for {expect!r}.")
-    import time
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        nodes_after = _wait_for_manual_check(client, parse_hierarchy(client.dump_ui()))
-        text_after = "\n".join(f"{item.text}\n{item.content_desc}" for item in nodes_after)
-        if risky_action_terms(text_after):
-            raise TaskError("Risk-related screen text detected after tap; automation stopped")
-        if any(node_matches(item, text=expect) for item in nodes_after):
-            _operation_log("Expected result observed.")
-            return 0
-        time.sleep(0.5)
-    raise TaskError(f"Timed out waiting for expected text {expect!r}")
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="nitan-assistant", description="Rule-based ADB helper (no AI control loop)")
-    parser.add_argument("--adb", help="ADB executable path; defaults to PATH or WSL ADB")
+    parser.add_argument("--adb", help="ADB executable path; auto-detects SDK, LDPlayer or WSL when needed")
     parser.add_argument("--serial", help="ADB serial for a specific authorized device")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("devices", help="List connected ADB devices")
@@ -130,7 +80,8 @@ def main(argv: list[str] | None = None) -> int:
             for item in devices:
                 print(f"{item.serial}\t{item.state}\t{item.details}")
             return 0
-        client = _client(args)
+        serial = choose_serial(AdbClient(command).devices(), args.serial)
+        client = AdbClient(command, serial=serial)
         if args.command == "inspect":
             return _inspect(client, args.package)
         if args.command == "dump-ui":
@@ -151,15 +102,24 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Saved screenshot to {args.output}")
             return 0
         if args.command == "tap":
-            selector_name = "resource_id" if args.resource_id is not None else ("text" if args.text is not None else "desc")
-            selector_value = args.resource_id if args.resource_id is not None else (args.text if args.text is not None else args.desc)
-            return _tap(client, selector_name, selector_value, args.expect, args.timeout)
+            client.require_device()
+            selector, value = next((name, getattr(args, name)) for name in ("text", "desc", "resource_id")
+                                   if getattr(args, name) is not None)
+            tap_and_verify(client, selector, value, args.expect, args.timeout, logger=_operation_log)
+            return 0
         if args.command == "run":
             task = load_task(args.task)
             execute_task(client, task, logger=_operation_log)
             return 0
     except (AdbError, TaskError, OSError, ValueError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        message = f"ERROR: {exc}"
+        if args.command in {"tap", "run"}:
+            try:
+                _operation_log(message, "ERROR")
+            except OSError:
+                pass  # Error was already printed before the log-file write.
+        else:
+            print(message, file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         print("Stopped by user.", file=sys.stderr)

@@ -10,6 +10,10 @@ logs/
 *.png
 *.xml
 *.log
+/work/
+/outputs/
+/.gradle/
+/.kotlin/
 
 # User-provided game APKs and build artifacts
 *.apk
