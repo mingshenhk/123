@@ -73,12 +73,12 @@ class GameAccessibilityService : AccessibilityService() {
         }
     }
 
-    internal fun startAiTask(goal: String, openGame: () -> Unit) {
+    internal fun startAiTask(goal: String, spec: AiModelSpec, openGame: () -> Unit) {
         if (active || !ModelStore.supported || goal.isBlank() || goal.length > MAX_GOAL) return
-        val file = ModelStore.ready(this) ?: return
+        val file = ModelStore.ready(this, spec) ?: return
         val model = LocalAiModel(file, cacheDir)
         val ai = AiRunner(goal, model, SystemClock::elapsedRealtime, { level, message ->
-            RunLog.append(this, "本地 AI", level, message)
+            RunLog.append(this, spec.title, level, message)
         }, model::close)
         try {
             launch(ai, openGame)
