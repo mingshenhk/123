@@ -16,7 +16,7 @@ Windows 查找 PATH、SDK 和雷电安装目录的 ADB，最后尝试 Ubuntu WSL
 
 ## Android
 
-需要 JDK 17 或更新版本、Android SDK Platform 35 和 Build Tools 35.0.0。设置 `ANDROID_HOME` 指向已安装的 SDK，然后在仓库根目录运行。
+需要 JDK 17 或更新版本、Android SDK Platform 35、Build Tools 35.0.0、NDK 28.2.13676358 和 CMake 3.22.1。设置 `ANDROID_HOME` 指向已安装的 SDK，然后在仓库根目录运行。首次配置 CMake 时会下载并校验固定版本的 llama.cpp 源码。
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
@@ -30,7 +30,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 在设备上通过助手首页打开系统设置并启用服务。从角色入口测试，查看日志中的「游戏设定」点击、「客户端设定」出现、「返回」点击、「进入游戏」出现，以及「任务完成」。看到连接弹窗时先处理游戏连接，再从角色入口启动任务。
 
-本地 AI 需要 `arm64-v8a` 或 `x86_64` 和已通过应用校验的 [LiteRT 模型](MODEL_SELECTION.md)。可在角色入口输入「打开客户端设定」来验证模型推理、点击和页面核对。输入「打开游戏设定」可验证唯一同名按钮的直接定位。同名按钮、控件别名、页面变化、暂停和无效模型指令由 `AiRunnerTest` 覆盖。
+本地 AI 需要 `arm64-v8a` 或 `x86_64` 和已通过应用校验的 [GGUF 模型](MODEL_SELECTION.md)。可在角色入口输入「打开客户端设定」来验证模型推理、点击和页面核对。输入「打开游戏设定」可验证唯一同名按钮的直接定位。同名按钮、控件别名、页面变化、暂停和无效模型指令由 `AiRunnerTest` 覆盖。
 
 ## Codemagic
 

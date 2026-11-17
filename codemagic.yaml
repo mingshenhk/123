@@ -1,7 +1,7 @@
 workflows:
   android-debug:
     name: Android Debug APK
-    max_build_duration: 30
+    max_build_duration: 60
     environment:
       java: 17
     triggering:
@@ -15,6 +15,8 @@ workflows:
           include: true
           source: true
     scripts:
+      - name: Install Android native toolchain
+        script: sdkmanager "ndk;28.2.13676358" "cmake;3.22.1"
       - name: Test and build Debug APK
         script: |
           set -o pipefail

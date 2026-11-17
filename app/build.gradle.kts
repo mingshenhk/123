@@ -6,13 +6,25 @@ plugins {
 android {
     namespace = "io.github.mingshenhk.nitanassistant"
     compileSdk = 35
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "io.github.mingshenhk.nitanassistant"
         minSdk = 24
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
+        ndk {
+            abiFilters += setOf("arm64-v8a", "x86_64")
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+            buildStagingDirectory = rootProject.file("work/cxx")
+        }
     }
 
     sourceSets["main"].assets.srcDir(rootProject.file("tasks"))
@@ -30,6 +42,5 @@ kotlin {
 }
 
 dependencies {
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")
     testImplementation("junit:junit:4.13.2")
 }

@@ -12,13 +12,10 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.text.InputFilter
-import android.view.View
 import android.view.WindowInsets
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.RadioButton
-import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
@@ -27,8 +24,6 @@ import android.widget.Toast
 class MainActivity : Activity() {
     private companion object {
         const val IMPORT_MODEL = 1
-        const val SELECTED_MODEL = "selected-model"
-        const val PENDING_IMPORT = "pending-model-import"
         const val GOAL_VIEW = 0x10001
     }
     private val handler = Handler(Looper.getMainLooper())
@@ -47,13 +42,10 @@ class MainActivity : Activity() {
     private lateinit var pause: Button
     private lateinit var stop: Button
     private lateinit var log: TextView
-    private lateinit var modelOptions: List<RadioButton>
     private lateinit var modelStatus: TextView
     private lateinit var importModel: Button
     private lateinit var goal: EditText
     private lateinit var aiStart: Button
-    private var selectedModel = AiModelSpec.LFM_350M
-    private var pendingImport: AiModelSpec? = null
     private var logRevision = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -100,8 +92,6 @@ class MainActivity : Activity() {
             renderState()
         }
         val preferences = getSharedPreferences(SETTINGS_FILE, MODE_PRIVATE)
-        selectedModel = AiModelSpec.fromId(preferences.getString(SELECTED_MODEL, null)) ?: AiModelSpec.LFM_350M
-        pendingImport = AiModelSpec.fromId(savedInstanceState?.getString(PENDING_IMPORT))
         body.addView(Switch(this).apply {
             text = "在游戏中显示暂停和停止"
             minHeight = dp(48)
@@ -111,26 +101,14 @@ class MainActivity : Activity() {
             }
         })
         body.label("本地 AI", bold = true, top = 18)
-        val modelSelector = RadioGroup(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            body.addView(this)
-        }
-        modelOptions = AiModelSpec.entries.map { model ->
-            RadioButton(this).apply {
-                id = View.generateViewId()
-                text = model.title
-                minHeight = dp(48)
-                modelSelector.addView(this)
-            }
-        }
-        modelSelector.check(modelOptions[selectedModel.ordinal].id)
+        body.label(ModelStore.TITLE, 14f)
         modelStatus = body.label("正在检查模型", 14f)
         val modelActions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             body.addView(this)
         }
         modelActions.action("模型下载页") {
-            openExternal(Intent(Intent.ACTION_VIEW, Uri.parse(selectedModel.page)), "没有可用的浏览器")
+            openExternal(Intent(Intent.ACTION_VIEW, Uri.parse(ModelStore.PAGE)), "没有可用的浏览器")
         }
         importModel = modelActions.action("导入模型") {
             pickModel()
@@ -147,7 +125,7 @@ class MainActivity : Activity() {
             if (instruction.isEmpty()) {
                 goal.error = "请输入任务目标"
             } else {
-                GameAccessibilityService.connected?.startAiTask(instruction, selectedModel, ::openGame)
+                GameAccessibilityService.connected?.startAiTask(instruction, ::openGame)
                 renderState()
             }
         }
@@ -161,19 +139,6 @@ class MainActivity : Activity() {
         log = body.label("暂无记录", 13f).apply {
             setTextIsSelectable(true)
         }
-        modelSelector.setOnCheckedChangeListener { _, checkedId ->
-            val index = modelOptions.indexOfFirst { it.id == checkedId }
-            if (index >= 0) {
-                selectedModel = AiModelSpec.entries[index]
-                preferences.edit().putString(SELECTED_MODEL, selectedModel.name).apply()
-                renderState()
-            }
-        }
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        outState.putString(PENDING_IMPORT, pendingImport?.name)
     }
 
     override fun onResume() {
@@ -198,10 +163,8 @@ class MainActivity : Activity() {
             type = "*/*"
         }
         try {
-            pendingImport = selectedModel
             startActivityForResult(intent, IMPORT_MODEL)
         } catch (_: ActivityNotFoundException) {
-            pendingImport = null
             Toast.makeText(this, "系统文件选择器不可用", Toast.LENGTH_SHORT).show()
         }
     }
@@ -210,11 +173,9 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != IMPORT_MODEL) return
-        val model = pendingImport
-        pendingImport = null
         val uri = data?.data
-        if (resultCode == RESULT_OK && model != null && uri != null) {
-            ModelStore.import(this, uri, model)
+        if (resultCode == RESULT_OK && uri != null) {
+            ModelStore.import(this, uri)
         }
         renderState()
     }
@@ -240,16 +201,14 @@ class MainActivity : Activity() {
         val seconds = (service?.elapsedMillis ?: 0) / 1_000
         status.show(if (service == null) phase.label else "${phase.label} · ${seconds} 秒\n${service.status}")
         start.isEnabled = service != null && installed && !service.active
-        val modelReady = ModelStore.ready(this, selectedModel) != null
-        val canChangeModel = ModelStore.supported && !ModelStore.importing && service?.active != true
-        modelOptions.forEach { it.isEnabled = canChangeModel }
+        val modelReady = ModelStore.ready(this) != null
         modelStatus.show(when {
             !ModelStore.supported -> "此设备不支持端侧推理"
             ModelStore.importing -> "正在复制并校验模型"
             modelReady -> "模型已就绪 · 离线推理"
-            else -> ModelStore.error(selectedModel) ?: "请选择 ${selectedModel.fileName}（约 ${selectedModel.size}）"
+            else -> ModelStore.lastError ?: "请选择 ${ModelStore.FILE_NAME}（约 ${ModelStore.SIZE}）"
         })
-        importModel.isEnabled = canChangeModel && !modelReady
+        importModel.isEnabled = ModelStore.supported && !ModelStore.importing && service?.active != true && !modelReady
         aiStart.isEnabled = start.isEnabled && ModelStore.supported && modelReady && !ModelStore.importing
         pause.isEnabled = service?.active == true
         pause.show(if (phase == Phase.PAUSED) "继续" else "暂停")

@@ -4,53 +4,42 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
-import com.google.ai.edge.litertlm.Backend
-import com.google.ai.edge.litertlm.Contents
-import com.google.ai.edge.litertlm.ConversationConfig
-import com.google.ai.edge.litertlm.Engine
-import com.google.ai.edge.litertlm.EngineConfig
-import com.google.ai.edge.litertlm.SamplerConfig
-import com.google.ai.edge.litertlm.ThinkingConfig
 import java.io.File
 import java.util.concurrent.Executors
 
-internal class LocalAiModel(private val file: File, private val cache: File) : AiDecisionModel {
+internal class LocalAiModel(private val file: File) : AiDecisionModel {
     companion object {
+        private const val TAG = "NitanLocalModel"
         private val worker = Executors.newSingleThreadExecutor()
     }
 
     private val main = Handler(Looper.getMainLooper())
+    private val lock = Any()
     @Volatile private var closed = false
+    private var handle = 0L
+    private var loaded = false
 
     override fun decide(prompt: String, reply: (Result<String>) -> Unit) {
         worker.execute {
-            if (closed) return@execute
             val result = try {
-                // LiteRT-LM 0.18 can retain state across conversations on the same engine.
-                // Reopen the engine for each fresh screen and reuse the compiled weights on disk.
-                val response = Engine(EngineConfig(
-                    modelPath = file.absolutePath,
-                    backend = Backend.CPU(),
-                    maxNumTokens = 2_048,
-                    cacheDir = cache.absolutePath,
-                )).use { runtime ->
-                    val loading = SystemClock.elapsedRealtime()
-                    runtime.initialize()
-                    Log.i("NitanLocalModel", "Engine initialized in ${SystemClock.elapsedRealtime() - loading} ms")
-                    val started = SystemClock.elapsedRealtime()
-                    runtime.createConversation(ConversationConfig(
-                        systemInstruction = Contents.of(AI_INSTRUCTIONS.trimIndent()),
-                        samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0),
-                        automaticToolCalling = false,
-                        maxOutputToken = 12,
-                        thinkingConfig = ThinkingConfig(enableThinking = false),
-                    )).use { conversation ->
-                        conversation.sendMessage(prompt).toString()
-                    }.also {
-                        Log.i("NitanLocalModel", "Decision generated in ${SystemClock.elapsedRealtime() - started} ms")
+                val session = synchronized(lock) {
+                    if (closed) return@execute
+                    if (handle == 0L) {
+                        System.loadLibrary("nitan_gguf")
+                        handle = nativeCreate()
                     }
+                    handle
                 }
-                Result.success(response)
+                if (!loaded) {
+                    val started = SystemClock.elapsedRealtime()
+                    nativeLoad(session, file.absolutePath.toByteArray(), Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
+                    loaded = true
+                    Log.i(TAG, "GGUF initialized in ${SystemClock.elapsedRealtime() - started} ms")
+                }
+                val started = SystemClock.elapsedRealtime()
+                val answer = nativeGenerate(session, chatPrompt(prompt).toByteArray())
+                Log.i(TAG, "GGUF decision generated in ${SystemClock.elapsedRealtime() - started} ms")
+                Result.success(answer)
             } catch (error: LinkageError) {
                 modelFailure(error, "设备无法加载端侧推理组件")
             } catch (error: Exception) {
@@ -61,11 +50,37 @@ internal class LocalAiModel(private val file: File, private val cache: File) : A
     }
 
     fun close() {
-        closed = true
+        synchronized(lock) {
+            if (closed) return
+            closed = true
+            if (handle == 0L) return
+            nativeCancel(handle)
+        }
+        worker.execute {
+            synchronized(lock) {
+                nativeDestroy(handle)
+                handle = 0L
+            }
+        }
+    }
+
+    private fun chatPrompt(prompt: String) = buildString {
+        append("<|startoftext|><|im_start|>system\n")
+        append(AI_INSTRUCTIONS.trimIndent())
+        append("<|im_end|>\n<|im_start|>user\n")
+        // The goal and screen text may contain strings that resemble chat control tokens.
+        append(prompt.replace('<', '＜'))
+        append("<|im_end|>\n<|im_start|>assistant\n<think></think>")
     }
 
     private fun modelFailure(error: Throwable, message: String): Result<String> {
-        Log.w("NitanLocalModel", "LiteRT-LM error (${error.javaClass.simpleName}): ${error.message}")
+        if (!closed) Log.w(TAG, "GGUF error (${error.javaClass.simpleName}): ${error.message}")
         return Result.failure(IllegalStateException(message))
     }
+
+    private external fun nativeCreate(): Long
+    private external fun nativeLoad(handle: Long, path: ByteArray, threads: Int)
+    private external fun nativeGenerate(handle: Long, prompt: ByteArray): String
+    private external fun nativeCancel(handle: Long)
+    private external fun nativeDestroy(handle: Long)
 }

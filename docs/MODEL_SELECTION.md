@@ -1,7 +1,9 @@
 # 手机端模型
 
-v0.3.0 支持 LFM2.5-350M INT4（248 MB）和 LFM3-1.7B 混合 INT4（1.44 GB）。两款模型都通过 LiteRT-LM 在 CPU 上离线运行，应用配置 2,048 token 的上下文，输入为无障碍服务提供的控件文字。默认选中 350M。每条任务使用启动时选中的一款模型。[350M LiteRT 文件](https://huggingface.co/litert-community/LFM2.5-350M) · [1.7B LiteRT 文件和测试数据](https://huggingface.co/litert-community/LFM3-1.7B-LiteRT) · [Android 运行时](https://developers.google.com/edge/litert-lm/android)
+v0.4.0 使用 Liquid AI 的 LFM3-1.7B Q4_K_M GGUF。模型约 1.10 GB，导入时校验文件长度和 SHA-256。助手使用 llama.cpp b11960，在 ARM64 或 x86_64 的 Android 设备 CPU 上离线运行。[官方模型文件及校验值](https://huggingface.co/LiquidAI/LFM3-1.7B-GGUF/blob/b3f2ae5d73cd3c91bf40e8ba752c648aa05dffdf/LFM3-1.7B-Q4_K_M.gguf) · [llama.cpp b11960](https://github.com/ggml-org/llama.cpp/releases/tag/b11960)
 
-在雷电 9 的 Android 9 环境，使用游戏 4.1.2 的角色入口对比「打开客户端设定」。耗时包含模型初始化和生成首条操作。LFM2.5-350M 两次分别用 4.6 秒和 3.5 秒返回，均未生成可执行操作。LFM3-1.7B 的一次测试用 37.1 秒选中「游戏设定」，助手完成点击并核验了「客户端设定」标题。
+模型每次读取当前屏幕上的控件文字和点击记录，在 2,048 token 的上下文内选择点击、完成或请求帮助。同一任务的多次决策复用模型，只重置推理状态。助手会核对点击前的界面和点击后的结果。
 
-LFM3-1.7B 这份量化文件的公开解码成绩为 Galaxy S26 CPU 35.53 token/s、GPU 32.42 token/s，以及 Pixel 8a CPU 14.73 token/s、GPU 12.77 token/s。两款设备的 CPU 内存峰值分别约 2.2 GiB 和 1.9 GiB。游戏内的单步耗时还包括模型加载、处理界面文字和核对点击结果。实体手机上的助手任务耗时、内存和发热待实测。[设备测试数据](https://huggingface.co/litert-community/LFM3-1.7B-LiteRT)
+v0.3.0 的 LiteRT-LM 版在雷电 9（Android 9）、游戏 4.1.2 的角色入口测试「打开客户端设定」时，LFM3-1.7B 用 37.1 秒初始化并生成首条操作，随后成功点击「游戏设定」并核验了「客户端设定」标题。LFM2.5-350M 两次分别用约 4.6 秒和 3.5 秒返回，均未生成可执行操作。
+
+v0.4.0 在同一环境测试「打开客户端设定」时，两次均成功点击「游戏设定」并核验标题。加载模型加生成首条操作分别用 26.1 秒和 27.4 秒。使用按钮原文「打开游戏设定」时，助手直接定位控件，约 2 秒完成点击和核验。角色内任务和实体手机的表现仍待实测。

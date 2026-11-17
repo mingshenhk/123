@@ -14,9 +14,9 @@
 - 复用 Python 脚本的设定往返规则，并在雷电 9 安装验证。
 - Gradle Wrapper、Debug APK 和 Codemagic 构建工作流。
 
-## Android 本地 AI V0.2
+## Android 本地 AI V0.4
 
-- 支持导入并校验 LFM3-1.7B 量化模型，使用 LiteRT-LM 离线执行自然语言目标。
+- 支持导入并校验 LFM3-1.7B Q4_K_M GGUF，使用 llama.cpp 离线执行自然语言目标。
 - 通过无障碍服务逐步选择控件、点击并重新读取界面。
 
 ## 下一步
